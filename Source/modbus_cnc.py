@@ -6,24 +6,32 @@ FUNC_READ_MSG = 101
 FUNC_READ_HOLD_REG = 3
 FUNC_WRITE_MULT_REG = 16
 READ_BYTE_NUMB = 100
-cnc_addr = 1;
 
 class ModbusCNC:
     """ Class for operation with PT-CNC via ModbusRTU """
+
+    FORM_UNSIGN = 0
+    FORM_SIGN = 1
+
+    mb_addr = 1;
 
     def __init__(self, port_name):
         """ Open COM-port and setup it """
         self.port = serial.Serial(port_name, DEFAULT_BAUDRATE,
                              parity=serial.PARITY_NONE,
                              stopbits=serial.STOPBITS_ONE,
-                             timeout=0.5)
+                             timeout=0.1)
+
+    def setAddress(self, addr):
+        """ Set Modbus slave address, by default address is set to 1 """
+        self.mb_addr = addr
 
     def sendMessage(self, msg):
         """ Send 8 byte message to CNC """
         frame = []
         crc = []
         #Slave address
-        frame.append(cnc_addr)
+        frame.append(self.mb_addr)
         #Function code
         frame.append(FUNC_SEND_MSG)
         #Bytes of message
@@ -154,7 +162,7 @@ class ModbusCNC:
         frame = []
         crc = []
         #Slave address
-        frame.append(cnc_addr)
+        frame.append(self.mb_addr)
         #Function code
         frame.append(FUNC_READ_MSG)
         #Calculate CRC
@@ -218,7 +226,7 @@ class ModbusCNC:
         frame = []
         crc = []
         #Slave address
-        frame.append(cnc_addr)
+        frame.append(self.mb_addr)
         #Function code
         frame.append(FUNC_READ_HOLD_REG)
         #Starting register address
@@ -250,6 +258,53 @@ class ModbusCNC:
         value = answ[6] | (answ[5] << 8) | (answ[4] << 16) | (answ[3] << 24)
         return value
 
+    def readHoldingRegister(self, reg, numb, form = FORM_UNSIGN):
+        """ Read standard Modbus 16-bit holding register """
+        frame = []
+        crc = []
+        #Slave address
+        frame.append(self.mb_addr)
+        #Function code
+        frame.append(FUNC_READ_HOLD_REG)
+        #Starting register address
+        addr_lo = reg & 0xFF
+        addr_hi = (reg >> 8) & 0xFF
+        frame.append(addr_hi)
+        frame.append(addr_lo)
+        #Quantity of registers
+        frame.append((numb >> 8) & 0xFF)
+        frame.append(numb & 0xFF)
+        #Calculate CRC
+        crc = self.calcCRC16(frame)
+        frame.append(crc[0])
+        frame.append(crc[1])
+        #Send frame
+        self.port.write(frame)
+        for c in frame:
+            print(hex(c), end=' ')
+        print()
+        #Read answer
+        answ = []
+        answ_len = 3 + numb*2 + 2
+        answ = self.port.read(answ_len)#READ_BYTE_NUMB
+        #Print received frame
+        for c in answ:
+            print(hex(c), end=' ')
+        print()
+        regs = []
+        if answ[2] & 0x80 == 0:
+            numb = answ[2] // 2
+            for i in range(2, numb+2):
+                if form == self.FORM_UNSIGN:
+                    reg = (answ[i*2-1] << 8) | answ[i*2]
+                    regs.append(reg)
+                else:
+                    reg = (answ[i*2-1] << 8) | answ[i*2]
+                    if reg > 0x7FFF:
+                        reg = -(0xFFFF - reg + 1)
+                    regs.append(reg)
+        return regs
+
     def writeRegister(self, reg, value):
         """ Write CNC register """
         if reg > 0:
@@ -259,7 +314,7 @@ class ModbusCNC:
         frame = []
         crc = []
         #Slave address
-        frame.append(cnc_addr)
+        frame.append(self.mb_addr)
         #Function code
         frame.append(FUNC_WRITE_MULT_REG)
         #Starting register address
